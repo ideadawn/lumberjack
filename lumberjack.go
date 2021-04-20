@@ -107,6 +107,9 @@ type Logger struct {
 	// using gzip. The default is not to perform compression.
 	Compress bool `json:"compress" yaml:"compress"`
 
+	// WhenRotate will be called when log file rotating.
+	WhenRotate func(logfile string)
+
 	size int64
 	file *os.File
 	mu   sync.Mutex
@@ -195,6 +198,13 @@ func (l *Logger) Rotate() error {
 func (l *Logger) rotate() error {
 	if err := l.close(); err != nil {
 		return err
+	}
+	if l.WhenRotate != nil {
+		// void panic
+		func() {
+			defer recover()
+			l.WhenRotate(l.filename())
+		}()
 	}
 	if err := l.openNew(); err != nil {
 		return err
