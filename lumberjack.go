@@ -199,14 +199,11 @@ func (l *Logger) rotate() error {
 	if err := l.close(); err != nil {
 		return err
 	}
-	if l.WhenRotate != nil {
-		// void panic
-		func() {
-			defer recover()
-			l.WhenRotate(l.filename())
-		}()
+	newname, err := l.openNew()
+	if newname != `` && l.WhenRotate != nil {
+		go l.WhenRotate(newname)
 	}
-	if err := l.openNew(); err != nil {
+	if err != nil {
 		return err
 	}
 	l.mill()
@@ -215,12 +212,13 @@ func (l *Logger) rotate() error {
 
 // openNew opens a new log file for writing, moving any old log file out of the
 // way.  This methods assumes the file has already been closed.
-func (l *Logger) openNew() error {
+func (l *Logger) openNew() (string, error) {
 	err := os.MkdirAll(l.dir(), 0755)
 	if err != nil {
-		return fmt.Errorf("can't make directories for new logfile: %s", err)
+		return "", fmt.Errorf("can't make directories for new logfile: %s", err)
 	}
 
+	var newname string
 	name := l.filename()
 	mode := os.FileMode(0600)
 	info, err := osStat(name)
@@ -228,14 +226,14 @@ func (l *Logger) openNew() error {
 		// Copy the mode off the old logfile.
 		mode = info.Mode()
 		// move the existing file
-		newname := backupName(name, l.LocalTime)
+		newname = backupName(name, l.LocalTime)
 		if err := os.Rename(name, newname); err != nil {
-			return fmt.Errorf("can't rename log file: %s", err)
+			return "", fmt.Errorf("can't rename log file: %s", err)
 		}
 
 		// this is a no-op anywhere but linux
 		if err := chown(name, info); err != nil {
-			return err
+			return newname, err
 		}
 	}
 
@@ -244,11 +242,11 @@ func (l *Logger) openNew() error {
 	// just wipe out the contents.
 	f, err := os.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 	if err != nil {
-		return fmt.Errorf("can't open new logfile: %s", err)
+		return newname, fmt.Errorf("can't open new logfile: %s", err)
 	}
 	l.file = f
 	l.size = 0
-	return nil
+	return newname, nil
 }
 
 // backupName creates a new filename from the given name, inserting a timestamp
@@ -277,7 +275,8 @@ func (l *Logger) openExistingOrNew(writeLen int) error {
 	filename := l.filename()
 	info, err := osStat(filename)
 	if os.IsNotExist(err) {
-		return l.openNew()
+		_, err = l.openNew()
+		return err
 	}
 	if err != nil {
 		return fmt.Errorf("error getting log file info: %s", err)
@@ -291,7 +290,8 @@ func (l *Logger) openExistingOrNew(writeLen int) error {
 	if err != nil {
 		// if we fail to open the old log file for some reason, just ignore
 		// it and open a new log file.
-		return l.openNew()
+		_, err = l.openNew()
+		return err
 	}
 	l.file = file
 	l.size = info.Size()
